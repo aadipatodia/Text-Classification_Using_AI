@@ -1,4 +1,3 @@
-# Text-Classification_Using_AI
 # Text-Classification_Using_AI: Advanced Text Clustering and Categorization
 
 This repository contains a Python script designed for advanced text clustering and categorization of textual remarks, particularly useful for analyzing customer feedback, incident reports, or any large collection of unstructured text data. While the repository name suggests "Text Classification," the core functionality of this script focuses on **unsupervised text clustering and automated category naming** using modern AI techniques.
