@@ -13,6 +13,8 @@ import nltk
 from langdetect import detect, DetectorFactory
 import google.generativeai as genai
 
+# --- GEMINI API INTEGRATION ---
+# Configure the API with your key from the environment variable
 try:
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 except KeyError:
@@ -31,7 +33,7 @@ except LookupError:
 
 # Define universal stopwords for TF-IDF
 UNIVERSAL_STOPWORDS = set(nltk_stopwords.words('english') + [
-    'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'from', 'by', 'this', 'that', 'it', 'its', 'his', 'her', 'their', 'our',
+    'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'from', 'by', 'this', 'that', 'it', 'its', 'her', 'their', 'our',
     'what', 'where', 'how', 'why', 'who', 'whom', 'which', 'whether',
     'yesterday', 'today', 'tomorrow', 'morning', 'evening', 'night', 'day', 'days', 'hr', 'hrs', 'hour', 'hours', 'time', 'date', 'week', 'month', 'year', 'ago',
     'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'zero',
@@ -201,11 +203,14 @@ def get_unique_name(base_name: str, existing_names: set, suffix_identifier: str 
     return name
 
 def main():
-    excel_file_path = "./Meter.xlsx"  
+    excel_file_path = "./Meter.xlsx"
     text_column_name = "REMARKS"
     output_excel_path_wide_format = "../clustered_remarks_named.xlsx" 
 
-    max_remark_clusters_limit = 10
+    # Set the total number of primary remark clusters to 15.
+    # This will result in 17 columns total (15 clusters + 2 other columns).
+    max_remark_clusters_limit = 15
+    
     max_name_clusters_limit = 5
     hdbscan_min_cluster_size = 2
     hdbscan_min_samples = 2
@@ -231,28 +236,43 @@ def main():
             initial_cluster_labels = hdbscan_clusterer.fit_predict(embeddings)
             print(f"   [Clustering] Initial HDBSCAN complete. Found {len(set(initial_cluster_labels)) - (1 if -1 in initial_cluster_labels else 0)} clusters.")
 
+            # --- FIX FOR IndexError ---
             if assign_noise_to_nearest_cluster and -1 in initial_cluster_labels and len(set(initial_cluster_labels)) > 1:
                 print(f"   [Noise Handling] Attempting to assign {np.sum(initial_cluster_labels == -1)} noise points.")
-                soft_clusters = hdbscan.prediction.approximate_predict(hdbscan_clusterer, embeddings)
+                
+                # Get the sorted list of unique, non-noise cluster labels
+                unique_cluster_labels = sorted([c for c in hdbscan_clusterer.labels_ if c != -1])
+                
+                # Get the membership probabilities for all points
                 probabilities = hdbscan.prediction.membership_vector(hdbscan_clusterer, embeddings)
-                for i, label in enumerate(initial_cluster_labels):
-                    if label == -1:
-                        valid_soft_cluster_indices = np.where(soft_clusters[i] != -1)[0]
-                        if len(valid_soft_cluster_indices) > 0:
-                            best_cluster_idx = valid_soft_cluster_indices[np.argmax(probabilities[i, valid_soft_cluster_indices])]
-                            initial_cluster_labels[i] = best_cluster_idx
+                
+                noise_indices = np.where(initial_cluster_labels == -1)[0]
+                
+                for i in noise_indices:
+                    # Find the index of the highest probability
+                    best_prob_idx = np.argmax(probabilities[i, :])
+                    
+                    # Use this index to find the corresponding original HDBSCAN cluster label
+                    best_cluster_label = unique_cluster_labels[best_prob_idx]
+                    
+                    # Assign the noise point to this cluster
+                    initial_cluster_labels[i] = best_cluster_label
+                    
                 print(f"   [Noise Handling] Reassignment complete. New noise points: {np.sum(initial_cluster_labels == -1)}.")
 
-            final_cluster_labels, unique_remark_clusters = run_hdbscan_and_agglomerate(
+            final_cluster_labels, unique_initial_clusters = run_hdbscan_and_agglomerate(
                 embeddings, initial_cluster_labels, max_remark_clusters_limit
             )
             
             for i, clustered_label in enumerate(final_cluster_labels):
                 original_indexed_cluster_labels[english_remark_original_indices[i]] = clustered_label
             
-            # --- NAMING CLUSTERS USING GENERATIVE AI ---
+            # --- FIX: Iterate over the final clusters, not the initial ones ---
+            final_unique_clusters = sorted([c for c in set(final_cluster_labels) if c != -1])
+            print(f"   [Gen AI Naming] Naming {len(final_unique_clusters)} final clusters.")
+
             used_final_names = set()
-            for cluster_id in sorted([c for c in unique_remark_clusters if c != -1]):
+            for cluster_id in final_unique_clusters:
                 cluster_texts_original = [english_remark_texts[j] for j, label in enumerate(final_cluster_labels) if label == cluster_id]
                 proposed_final_name = get_genai_cluster_name(cluster_texts_original)
                 final_name = get_unique_name(proposed_final_name, used_final_names, str(cluster_id))
@@ -299,13 +319,13 @@ def main():
         print(df_results_wide.head())
 
     except FileNotFoundError as fnfe:
-        print(f"\n ERROR: File not found. Please check 'excel_file_path'. Details: {fnfe}")
+        print(f"\n❌ ERROR: File not found. Please check 'excel_file_path'. Details: {fnfe}")
         exit(1)
     except KeyError as ke:
-        print(f"\n ERROR: Column not found. Please check 'text_column_name'. Details: {ke}")
+        print(f"\n❌ ERROR: Column not found. Please check 'text_column_name'. Details: {ke}")
         exit(1)
     except Exception as e:
-        print(f"\n An unexpected error occurred during execution: {e}")
+        print(f"\n❌ An unexpected error occurred during execution: {e}")
         import traceback
         traceback.print_exc()
         exit(1)
