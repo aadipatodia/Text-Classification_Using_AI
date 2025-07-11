@@ -4,7 +4,6 @@
 
 import os
 import pandas as pd
-<<<<<<< Updated upstream
 from sentence_transformers import SentenceTransformer
 import hdbscan
 import re
@@ -12,8 +11,6 @@ from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 from collections import defaultdict, OrderedDict
 import hashlib
-=======
->>>>>>> Stashed changes
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import MiniBatchKMeans
 import re
@@ -25,10 +22,8 @@ from langdetect import detect, DetectorFactory
 import google.generativeai as genai
 
 # --- GEMINI API INTEGRATION ---
-<<<<<<< Updated upstream
 # Configure the API with your key from the environment variable
-=======
->>>>>>> Stashed changes
+
 try:
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 except KeyError:
@@ -43,10 +38,9 @@ try:
 except LookupError:
     nltk.download('stopwords')
 
-<<<<<<< Updated upstream
+
 # Define universal stopwords for TF-IDF
-=======
->>>>>>> Stashed changes
+
 UNIVERSAL_STOPWORDS = set(nltk_stopwords.words('english') + [
     'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'from', 'by', 'this', 'that', 'it', 'its', 'her', 'their', 'our',
     'what', 'where', 'how', 'why', 'who', 'whom', 'which', 'whether',
@@ -57,15 +51,10 @@ UNIVERSAL_STOPWORDS = set(nltk_stopwords.words('english') + [
     'kv', 'tf', 'na', "service", "request", "feedback", "query", "regarding", "about", "given"
 ])
 
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes
 def clean_text(text: str) -> str:
     """Removes extra whitespace from a string."""
     return re.sub(r'\s+', ' ', text.strip())
 
-<<<<<<< Updated upstream
 def get_genai_cluster_name(cluster_texts: list[str]) -> str:
     """Generates a category name using the Gemini model based on the cluster's remarks."""
     print("   [Gen AI Naming] Sending prompt to Gemini model...")
@@ -158,7 +147,7 @@ def run_hdbscan_and_agglomerate(embeddings: np.ndarray, initial_labels: np.ndarr
         else:
             print("   [Clustering] Not enough centroids for agglomeration or target cluster is 1.")
     return final_cluster_labels, unique_initial_clusters
-=======
+
 def get_top_keywords(remarks: list[str], n_keywords: int = 10) -> list[str]:
     """Extracts top keywords from a list of remarks using TF-IDF."""
     if not remarks or len(remarks) < 2:
@@ -212,7 +201,6 @@ def get_genai_cluster_name(cluster_texts: list[str], top_keywords: list[str]) ->
     except Exception as e:
         print(f"   [Gen AI Naming] ERROR: API call failed. Falling back to a generic name. Error: {e}")
         return "Generic Unnamed Category"
->>>>>>> Stashed changes
 
 def load_excel_file(file_path: str, column: str) -> tuple[list[str], pd.DataFrame]:
     """Loads remarks from an Excel file."""
@@ -276,7 +264,7 @@ def get_unique_name(base_name: str, existing_names: set, suffix_identifier: str 
             
     return name
 
-<<<<<<< Updated upstream
+
 def main():
     excel_file_path = "./Meter.xlsx"
     text_column_name = "REMARKS"
@@ -293,14 +281,15 @@ def main():
     embedding_boilerplate_min_df = 0.8
 
     print("\n--- Starting Text Clustering and Categorization Script (Gen AI Naming) ---")
-=======
+
 def is_semantically_similar(name1: str, name2: str) -> bool:
     """Uses Gemini to determine if two phrases are semantically similar."""
     print(f"   [Gen AI Merging] Checking similarity between '{name1}' and '{name2}'...")
     prompt = f"""
-    Are the following two phrases synonyms or do they convey the same meaning? Answer with only "Yes" or "No".
+    Are the following two phrases synonyms or do they convey the same meaning?
     Phrase 1: "{name1}"
     Phrase 2: "{name2}"
+    Answer with a single word: "YES" or "NO".
     """
     try:
         model = genai.GenerativeModel('models/gemma-3n-e2b-it')
@@ -374,7 +363,6 @@ def main():
     min_remark_clusters_limit_after_merge = 5
     
     print("\n--- Starting Text Clustering and Categorization Script (TF-IDF & K-Means) ---")
->>>>>>> Stashed changes
     try:
         raw_remarks_list, _ = load_excel_file(excel_file_path, text_column_name) 
         english_remarks_w_indices, other_remarks_w_indices = segregate_remarks_by_language(raw_remarks_list)
@@ -387,7 +375,7 @@ def main():
         
         if english_remark_texts:
             print("\n--- Processing English Remarks for Clustering ---")
-<<<<<<< Updated upstream
+
             processed_remarks, embeddings = preprocess_and_embed(english_remark_texts, embedding_boilerplate_min_df, "cpu")
             
             hdbscan_clusterer = hdbscan.HDBSCAN(min_cluster_size=hdbscan_min_cluster_size, min_samples=hdbscan_min_samples, metric='euclidean', prediction_data=True)
@@ -421,8 +409,7 @@ def main():
             final_cluster_labels, unique_initial_clusters = run_hdbscan_and_agglomerate(
                 embeddings, initial_cluster_labels, max_remark_clusters_limit
             )
-=======
->>>>>>> Stashed changes
+
             
             vectorizer = TfidfVectorizer(stop_words=list(UNIVERSAL_STOPWORDS), ngram_range=(1, 3), min_df=5)
             tfidf_matrix = vectorizer.fit_transform(english_remark_texts)
@@ -439,25 +426,22 @@ def main():
             for i, clustered_label in enumerate(final_cluster_labels):
                 original_indexed_cluster_labels[english_remark_original_indices[i]] = clustered_label
             
-<<<<<<< Updated upstream
+
             # --- FIX: Iterate over the final clusters, not the initial ones ---
-=======
->>>>>>> Stashed changes
+
             final_unique_clusters = sorted([c for c in set(final_cluster_labels) if c != -1])
             print(f"   [Gen AI Naming] Naming {len(final_unique_clusters)} final clusters.")
 
             used_final_names = set()
             for cluster_id in final_unique_clusters:
                 cluster_texts_original = [english_remark_texts[j] for j, label in enumerate(final_cluster_labels) if label == cluster_id]
-<<<<<<< Updated upstream
                 proposed_final_name = get_genai_cluster_name(cluster_texts_original)
-=======
                 
                 top_keywords = get_top_keywords(cluster_texts_original)
                 print(f"   [Keywords] Top keywords for cluster {cluster_id}: {', '.join(top_keywords)}")
                 
                 proposed_final_name = get_genai_cluster_name(cluster_texts_original, top_keywords)
->>>>>>> Stashed changes
+
                 final_name = get_unique_name(proposed_final_name, used_final_names, str(cluster_id))
                 final_column_name_map[cluster_id] = final_name
                 used_final_names.add(final_name.lower())
