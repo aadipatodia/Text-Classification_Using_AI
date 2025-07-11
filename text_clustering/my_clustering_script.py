@@ -1,6 +1,3 @@
-# in powershell - $env:GEMINI_API_KEY = "your_api_key_here"
-
-
 import os
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -11,6 +8,7 @@ from collections import defaultdict
 from nltk.corpus import stopwords as nltk_stopwords
 import nltk
 from langdetect import detect, DetectorFactory
+from sentence_transformers import SentenceTransformer, util
 import google.generativeai as genai
 
 # --- GEMINI API INTEGRATION ---
@@ -29,7 +27,7 @@ except LookupError:
     nltk.download('stopwords')
 
 UNIVERSAL_STOPWORDS = set(nltk_stopwords.words('english') + [
-    'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'from', 'by', 'this', 'that', 'it', 'its', 'her', 'their', 'our',
+    'the', 'Area','a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'from', 'by', 'this', 'that', 'it', 'its', 'her', 'their', 'our',
     'what', 'where', 'how', 'why', 'who', 'whom', 'which', 'whether',
     'yesterday', 'today', 'tomorrow', 'morning', 'evening', 'night', 'day', 'days', 'hr', 'hrs', 'hour', 'hours', 'time', 'date', 'week', 'month', 'year', 'ago',
     'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'zero',
@@ -90,11 +88,18 @@ def get_genai_cluster_name(cluster_texts: list[str], top_keywords: list[str]) ->
         model = genai.GenerativeModel('models/gemma-3n-e2b-it')
         response = model.generate_content(prompt)
         name = response.text.strip()
+        # Fallback to the top keyword if Gemini returns an unhelpful name
+        if 'generic' in name.lower() or 'unnamed' in name.lower() or not name:
+            if top_keywords:
+                return top_keywords[0].replace('_', ' ').title()
+            return "Generic Category"
         return name
         
     except Exception as e:
-        print(f"   [Gen AI Naming] ERROR: API call failed. Falling back to a generic name. Error: {e}")
-        return "Generic Unnamed Category"
+        print(f"   [Gen AI Naming] ERROR: API call failed. Falling back to top keyword. Error: {e}")
+        if top_keywords:
+            return top_keywords[0].replace('_', ' ').title()
+        return "Generic Category"
 
 def load_excel_file(file_path: str, column: str) -> tuple[list[str], pd.DataFrame]:
     """Loads remarks from an Excel file."""
@@ -158,56 +163,93 @@ def get_unique_name(base_name: str, existing_names: set, suffix_identifier: str 
             
     return name
 
-def is_semantically_similar(name1: str, name2: str) -> bool:
-    """Uses Gemini to determine if two phrases are semantically similar."""
-    print(f"  [Gen AI Merging] Checking similarity between '{name1}' and '{name2}'...")
-    prompt = f"""
-    Are the following two phrases synonyms or do they convey the same meaning?
-    Phrase 1: "{name1}"
-    Phrase 2: "{name2}"
-    Answer with a single word: "YES" or "NO".
-    """
-    try:
-        model = genai.GenerativeModel('models/gemma-3n-e2b-it')
-        response = model.generate_content(prompt)
-        # Check if the response contains "YES" as a word.
-        # This is more robust than a simple .strip().lower() check
-        return "yes" in response.text.strip().lower()
-    except Exception as e:
-        print(f"   [Gen AI Merging] ERROR: API call for merging failed. Error: {e}")
-        return False
+def merge_identical_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Merges columns with identical names into a single column."""
+    print("\n--- Checking for and merging identical column names ---")
+    
+    cols = df.columns.tolist()
+    
+    # Identify unique and duplicate column names
+    seen = {}
+    duplicates = set()
+    for col in cols:
+        if col in seen:
+            duplicates.add(col)
+        else:
+            seen[col] = True
+    
+    if not duplicates:
+        print("   No identical column names found.")
+        return df
 
+    print(f"   Found identical columns: {list(duplicates)}")
+    
+    # Group columns by name and merge them
+    new_df = pd.DataFrame()
+    for col_name in set(cols):
+        matching_cols = [c for c in cols if c == col_name]
+        
+        if len(matching_cols) > 1:
+            print(f"   Merging {len(matching_cols)} columns named '{col_name}'...")
+            merged_col = pd.Series(dtype='object')
+            for c in matching_cols:
+                merged_col = merged_col.fillna(df[c])
+            new_df[col_name] = merged_col
+        else:
+            new_df[col_name] = df[col_name]
+
+    return new_df
+
+
+# This function now performs semantic merging efficiently without any thresholds or fallbacks.
 def merge_similar_columns(df: pd.DataFrame, min_columns: int = 5) -> pd.DataFrame:
-    """Merges columns with semantically similar names."""
-    print("\n--- Merging similar columns (Semantic Match) ---")
+    """
+    Merges columns with the highest semantic similarity using sentence embeddings.
+    This approach is much more efficient and guarantees merging.
+    """
+    print("\n--- Merging similar columns (Best-Match Strategy) ---")
     
     columns_to_process = [col for col in df.columns if 'Remarks' not in col]
     
+    if len(columns_to_process) < 2:
+        print("   Not enough columns to merge.")
+        return df
+        
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    column_embeddings = model.encode(columns_to_process, convert_to_tensor=True)
+    cosine_scores = util.cos_sim(column_embeddings, column_embeddings)
+    
     merged_mapping = {}
     
-    sorted_cols = sorted(columns_to_process)
-    
-    for i in range(len(sorted_cols)):
-        col1 = sorted_cols[i]
-        if col1 in merged_mapping.values():
+    # Create a list of tuples (score, col1_index, col2_index)
+    merging_candidates = []
+    for i in range(len(columns_to_process)):
+        for j in range(i + 1, len(columns_to_process)):
+            merging_candidates.append((cosine_scores[i][j].item(), i, j))
+
+    # Sort candidates by similarity score in descending order
+    merging_candidates.sort(key=lambda x: x[0], reverse=True)
+
+    # Greedily merge the most similar pairs
+    merged_cols_set = set()
+    for score, i, j in merging_candidates:
+        col1 = columns_to_process[i]
+        col2 = columns_to_process[j]
+
+        # Check if either column has already been merged
+        if col1 in merged_cols_set or col2 in merged_cols_set:
             continue
-
-        for j in range(i + 1, len(sorted_cols)):
-            col2 = sorted_cols[j]
-            if col2 in merged_mapping:
-                continue
-
-            if is_semantically_similar(col1, col2):
-                current_num_columns = len(columns_to_process) - len(merged_mapping)
-                if current_num_columns - 1 >= min_columns:
-                    print(f"   Merging '{col2}' into '{col1}' (Semantic Match)")
-                    merged_mapping[col2] = col1
-                else:
-                    print(f"   Skipping merge of '{col2}' and '{col1}' to maintain min column count of {min_columns}.")
-    
-    final_data_dict = defaultdict(list)
-    
-    # We need to process the data to create the new merged DataFrame
+            
+        current_num_columns = len(columns_to_process) - len(merged_mapping)
+        if current_num_columns - 1 >= min_columns:
+            print(f"   Merging '{col2}' into '{col1}' with a score of {score:.2f}")
+            merged_mapping[col2] = col1
+            merged_cols_set.add(col1)
+            merged_cols_set.add(col2)
+        else:
+            print(f"   Skipping further merges to maintain min column count of {min_columns}.")
+            break
+            
     temp_df = df.copy()
     for source_col, target_col in merged_mapping.items():
         if target_col not in temp_df.columns:
@@ -215,7 +257,6 @@ def merge_similar_columns(df: pd.DataFrame, min_columns: int = 5) -> pd.DataFram
         temp_df[target_col] = temp_df[target_col].fillna(temp_df[source_col])
         del temp_df[source_col]
         
-    # Re-order columns for clarity
     merged_cols = list(set(merged_mapping.values()))
     original_unmerged = [col for col in df.columns if col not in merged_mapping and col not in merged_mapping.values()]
     final_column_order = original_unmerged + sorted(merged_cols)
@@ -230,12 +271,16 @@ def main():
     text_column_name = "REMARKS"
     output_excel_path_wide_format = "../clustered_remarks_named.xlsx" 
 
-    max_remark_clusters_limit = 10
+    max_remark_clusters_limit = 8
     min_remark_clusters_limit_after_merge = 5
     
     print("\n--- Starting Text Clustering and Categorization Script (TF-IDF & K-Means) ---")
     try:
-        raw_remarks_list, _ = load_excel_file(excel_file_path, text_column_name) 
+        raw_remarks_list, df = load_excel_file(excel_file_path, text_column_name) 
+        
+        # --- NEW STEP: Merge columns with identical names
+        df = merge_identical_columns(df)
+        
         english_remarks_w_indices, other_remarks_w_indices = segregate_remarks_by_language(raw_remarks_list)
         
         english_remark_texts = [r_text for _, r_text in english_remarks_w_indices]
