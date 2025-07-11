@@ -1,5 +1,10 @@
+# in powershell - $env:GEMINI_API_KEY = "your_api_key_here"
+
+
+
 import os
 import pandas as pd
+<<<<<<< Updated upstream
 from sentence_transformers import SentenceTransformer
 import hdbscan
 import re
@@ -7,14 +12,23 @@ from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 from collections import defaultdict, OrderedDict
 import hashlib
+=======
+>>>>>>> Stashed changes
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import MiniBatchKMeans
+import re
+import numpy as np
+from collections import defaultdict
 from nltk.corpus import stopwords as nltk_stopwords
 import nltk
 from langdetect import detect, DetectorFactory
 import google.generativeai as genai
 
 # --- GEMINI API INTEGRATION ---
+<<<<<<< Updated upstream
 # Configure the API with your key from the environment variable
+=======
+>>>>>>> Stashed changes
 try:
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 except KeyError:
@@ -22,16 +36,17 @@ except KeyError:
     print("Please set it on your command line before running the script.")
     exit()
 
-# Set seed for reproducibility in language detection
 DetectorFactory.seed = 0
 
-# Download NLTK stopwords if not present
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
 
+<<<<<<< Updated upstream
 # Define universal stopwords for TF-IDF
+=======
+>>>>>>> Stashed changes
 UNIVERSAL_STOPWORDS = set(nltk_stopwords.words('english') + [
     'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'from', 'by', 'this', 'that', 'it', 'its', 'her', 'their', 'our',
     'what', 'where', 'how', 'why', 'who', 'whom', 'which', 'whether',
@@ -42,11 +57,15 @@ UNIVERSAL_STOPWORDS = set(nltk_stopwords.words('english') + [
     'kv', 'tf', 'na', "service", "request", "feedback", "query", "regarding", "about", "given"
 ])
 
+<<<<<<< Updated upstream
 
+=======
+>>>>>>> Stashed changes
 def clean_text(text: str) -> str:
     """Removes extra whitespace from a string."""
     return re.sub(r'\s+', ' ', text.strip())
 
+<<<<<<< Updated upstream
 def get_genai_cluster_name(cluster_texts: list[str]) -> str:
     """Generates a category name using the Gemini model based on the cluster's remarks."""
     print("   [Gen AI Naming] Sending prompt to Gemini model...")
@@ -139,6 +158,61 @@ def run_hdbscan_and_agglomerate(embeddings: np.ndarray, initial_labels: np.ndarr
         else:
             print("   [Clustering] Not enough centroids for agglomeration or target cluster is 1.")
     return final_cluster_labels, unique_initial_clusters
+=======
+def get_top_keywords(remarks: list[str], n_keywords: int = 10) -> list[str]:
+    """Extracts top keywords from a list of remarks using TF-IDF."""
+    if not remarks or len(remarks) < 2:
+        return []
+        
+    try:
+        vectorizer = TfidfVectorizer(
+            stop_words=list(UNIVERSAL_STOPWORDS),
+            ngram_range=(1, 2),
+            min_df=0.1
+        )
+        tfidf_matrix = vectorizer.fit_transform(remarks)
+        feature_names = vectorizer.get_feature_names_out()
+        
+        scores = np.asarray(tfidf_matrix.sum(axis=0)).ravel()
+        top_indices = scores.argsort()[-n_keywords:][::-1]
+        
+        top_keywords = [feature_names[i] for i in top_indices]
+        return top_keywords
+    except ValueError:
+        return []
+
+def get_genai_cluster_name(cluster_texts: list[str], top_keywords: list[str]) -> str:
+    """Generates a category name using the Gemini model based on keywords and remarks."""
+    print("   [Gen AI Naming] Sending prompt to Gemini model...")
+    if not cluster_texts:
+        return "Uncategorized Remarks"
+    
+    sample_size = min(20, len(cluster_texts))
+    text_sample = "\n".join(cluster_texts[:sample_size])
+
+    prompt = f"""
+    You are an expert at analyzing customer feedback. Your task is to provide a single, concise, and professional category name for a group of similar remarks. The name should be no more than 7 words.
+
+    The most representative keywords for this category are: {', '.join(top_keywords)}.
+
+    A sample of the remarks for this category:
+    ---
+    {text_sample}
+    ---
+
+    Based on these keywords and remarks, the best category name is:
+    """
+
+    try:
+        model = genai.GenerativeModel('models/gemma-3n-e2b-it')
+        response = model.generate_content(prompt)
+        name = response.text.strip()
+        return name
+        
+    except Exception as e:
+        print(f"   [Gen AI Naming] ERROR: API call failed. Falling back to a generic name. Error: {e}")
+        return "Generic Unnamed Category"
+>>>>>>> Stashed changes
 
 def load_excel_file(file_path: str, column: str) -> tuple[list[str], pd.DataFrame]:
     """Loads remarks from an Excel file."""
@@ -202,6 +276,7 @@ def get_unique_name(base_name: str, existing_names: set, suffix_identifier: str 
             
     return name
 
+<<<<<<< Updated upstream
 def main():
     excel_file_path = "./Meter.xlsx"
     text_column_name = "REMARKS"
@@ -218,6 +293,88 @@ def main():
     embedding_boilerplate_min_df = 0.8
 
     print("\n--- Starting Text Clustering and Categorization Script (Gen AI Naming) ---")
+=======
+def is_semantically_similar(name1: str, name2: str) -> bool:
+    """Uses Gemini to determine if two phrases are semantically similar."""
+    print(f"   [Gen AI Merging] Checking similarity between '{name1}' and '{name2}'...")
+    prompt = f"""
+    Are the following two phrases synonyms or do they convey the same meaning? Answer with only "Yes" or "No".
+    Phrase 1: "{name1}"
+    Phrase 2: "{name2}"
+    """
+    try:
+        model = genai.GenerativeModel('models/gemma-3n-e2b-it')
+        response = model.generate_content(prompt)
+        return response.text.strip().lower() == 'yes'
+    except Exception as e:
+        print(f"   [Gen AI Merging] ERROR: API call for merging failed. Error: {e}")
+        return False
+
+def merge_similar_columns(df: pd.DataFrame, min_columns: int = 5) -> pd.DataFrame:
+    """Merges columns with semantically similar names."""
+    print("\n--- Merging similar columns (Semantic Match) ---")
+    
+    columns_to_process = [col for col in df.columns if 'Remarks' not in col]
+    
+    merged_mapping = {}
+    
+    sorted_cols = sorted(columns_to_process)
+    
+    for i in range(len(sorted_cols)):
+        col1 = sorted_cols[i]
+        if col1 in merged_mapping.values():
+            continue
+
+        for j in range(i + 1, len(sorted_cols)):
+            col2 = sorted_cols[j]
+            if col2 in merged_mapping:
+                continue
+
+            # Check semantic similarity using the new function
+            if is_semantically_similar(col1, col2):
+                current_num_columns = len(columns_to_process) - len(merged_mapping)
+                if current_num_columns - 1 >= min_columns:
+                    print(f"   Merging '{col2}' into '{col1}' (Semantic Match)")
+                    merged_mapping[col2] = col1
+                else:
+                    print(f"   Skipping merge of '{col2}' and '{col1}' to maintain min column count of {min_columns}.")
+    
+    final_data_dict = defaultdict(list)
+    
+    for _, row in df.iterrows():
+        row_data = {}
+        for col in df.columns:
+            if col not in merged_mapping:
+                row_data[col] = row[col]
+            else:
+                primary_col = merged_mapping[col]
+                if primary_col not in row_data:
+                    row_data[primary_col] = row[primary_col]
+                
+                if pd.notna(row[col]) and row_data[primary_col] != row[col]:
+                    if pd.notna(row_data[primary_col]):
+                        row_data[primary_col] += " " + row[col]
+                    else:
+                        row_data[primary_col] = row[col]
+
+        for col, val in row_data.items():
+            final_data_dict[col].append(val)
+    
+    df_merged = pd.DataFrame.from_dict(final_data_dict, orient='index').transpose()
+
+    print("   Merging complete.")
+    return df_merged
+
+def main():
+    excel_file_path = "./Meter.xlsx"
+    text_column_name = "REMARKS"
+    output_excel_path_wide_format = "../clustered_remarks_named.xlsx" 
+
+    max_remark_clusters_limit = 10
+    min_remark_clusters_limit_after_merge = 5
+    
+    print("\n--- Starting Text Clustering and Categorization Script (TF-IDF & K-Means) ---")
+>>>>>>> Stashed changes
     try:
         raw_remarks_list, _ = load_excel_file(excel_file_path, text_column_name) 
         english_remarks_w_indices, other_remarks_w_indices = segregate_remarks_by_language(raw_remarks_list)
@@ -230,6 +387,7 @@ def main():
         
         if english_remark_texts:
             print("\n--- Processing English Remarks for Clustering ---")
+<<<<<<< Updated upstream
             processed_remarks, embeddings = preprocess_and_embed(english_remark_texts, embedding_boilerplate_min_df, "cpu")
             
             hdbscan_clusterer = hdbscan.HDBSCAN(min_cluster_size=hdbscan_min_cluster_size, min_samples=hdbscan_min_samples, metric='euclidean', prediction_data=True)
@@ -263,18 +421,43 @@ def main():
             final_cluster_labels, unique_initial_clusters = run_hdbscan_and_agglomerate(
                 embeddings, initial_cluster_labels, max_remark_clusters_limit
             )
+=======
+>>>>>>> Stashed changes
             
+            vectorizer = TfidfVectorizer(stop_words=list(UNIVERSAL_STOPWORDS), ngram_range=(1, 3), min_df=5)
+            tfidf_matrix = vectorizer.fit_transform(english_remark_texts)
+            
+            print(f"   [Clustering] TF-IDF matrix created with {tfidf_matrix.shape[1]} features.")
+            
+            n_clusters = min(max_remark_clusters_limit, len(english_remark_texts))
+            kmeans_model = MiniBatchKMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            initial_cluster_labels = kmeans_model.fit_predict(tfidf_matrix)
+
+            final_cluster_labels = initial_cluster_labels
+            print(f"   [Clustering] K-Means complete. Found {len(set(final_cluster_labels))} clusters.")
+
             for i, clustered_label in enumerate(final_cluster_labels):
                 original_indexed_cluster_labels[english_remark_original_indices[i]] = clustered_label
             
+<<<<<<< Updated upstream
             # --- FIX: Iterate over the final clusters, not the initial ones ---
+=======
+>>>>>>> Stashed changes
             final_unique_clusters = sorted([c for c in set(final_cluster_labels) if c != -1])
             print(f"   [Gen AI Naming] Naming {len(final_unique_clusters)} final clusters.")
 
             used_final_names = set()
             for cluster_id in final_unique_clusters:
                 cluster_texts_original = [english_remark_texts[j] for j, label in enumerate(final_cluster_labels) if label == cluster_id]
+<<<<<<< Updated upstream
                 proposed_final_name = get_genai_cluster_name(cluster_texts_original)
+=======
+                
+                top_keywords = get_top_keywords(cluster_texts_original)
+                print(f"   [Keywords] Top keywords for cluster {cluster_id}: {', '.join(top_keywords)}")
+                
+                proposed_final_name = get_genai_cluster_name(cluster_texts_original, top_keywords)
+>>>>>>> Stashed changes
                 final_name = get_unique_name(proposed_final_name, used_final_names, str(cluster_id))
                 final_column_name_map[cluster_id] = final_name
                 used_final_names.add(final_name.lower())
@@ -290,7 +473,7 @@ def main():
             ]
             final_wide_data_columns[final_col_name] = remarks_in_column
 
-        # Handle uncategorized English remarks (HDBSCAN noise)
+        # Handle uncategorized English remarks
         uncategorized_english_remarks = [raw_remarks_list[i] for i, label in enumerate(original_indexed_cluster_labels) if label == -1]
         if uncategorized_english_remarks:
             col_name_base = "Uncategorized English Remarks"
@@ -305,18 +488,15 @@ def main():
             final_wide_data_columns[col_name] = [r_text for _, r_text in other_remarks_w_indices]
             print(f"Added column: '{col_name}' for {len(other_remarks_w_indices)} remarks.")
 
-        # Pad columns to equal length for DataFrame creation
-        max_col_len = max((len(col_data) for col_data in final_wide_data_columns.values()), default=0)
-        for category_name, remarks_list_for_col in final_wide_data_columns.items():
-            if len(remarks_list_for_col) < max_col_len:
-                final_wide_data_columns[category_name].extend([np.nan] * (max_col_len - len(remarks_list_for_col)))
+        df_results_wide = pd.DataFrame(dict([ (k,pd.Series(v)) for k,v in final_wide_data_columns.items() ]))
         
-        df_results_wide = pd.DataFrame(final_wide_data_columns)
-        
+        # --- NEW STEP: Merge similar columns
+        df_final = merge_similar_columns(df_results_wide, min_columns=min_remark_clusters_limit_after_merge)
+
         print("\n--- Script Execution Complete ---")
-        save_results(df_results_wide, output_excel_path_wide_format)
+        save_results(df_final, output_excel_path_wide_format)
         print("\n--- Sample Results (Wide Format) ---")
-        print(df_results_wide.head())
+        print(df_final.head())
 
     except FileNotFoundError as fnfe:
         print(f"\n❌ ERROR: File not found. Please check 'excel_file_path'. Details: {fnfe}")
